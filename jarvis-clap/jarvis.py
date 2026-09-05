@@ -66,7 +66,7 @@ BLOCK_MS = 40
 CHANNELS = 1
 
 SPIKE_RATIO = 7.0
-MIN_RMS = 0.28
+MIN_RMS = 0.02
 COOLDOWN_S = 0.45
 MIN_DOUBLE_GAP_S = 0.12
 MAX_DOUBLE_GAP_S = 0.35
@@ -447,6 +447,7 @@ def main() -> int:
     first_clap_time: float | None = None
     spike_armed = True
     pending_peak: dict[str, float] | None = None
+    last_debug_log = 0.0
 
     log.info(
         "Listening (double clap: %.2f-%.2fs apart, rate=%d, block=%d ms, "
@@ -472,7 +473,10 @@ def main() -> int:
             er,
         )
     if DEBUG:
-        log.debug("JARVIS_DEBUG actif: le niveau et le seuil seront affiches a chaque pic.")
+        log.debug(
+            "JARVIS_DEBUG actif: niveau/seuil affiches en continu (toutes les 0.5s) "
+            "et a chaque pic."
+        )
 
     input_idx = _choose_input_device(blocksize)
 
@@ -501,6 +505,15 @@ def main() -> int:
 
                 threshold = max(noise_floor * SPIKE_RATIO, MIN_RMS)
                 retrigger_level = threshold * RETRIGGER_RATIO
+
+                if DEBUG and (now - last_debug_log) >= 0.5:
+                    last_debug_log = now
+                    log.debug(
+                        "niveau=%.4f noise_floor=%.5f threshold=%.4f",
+                        level,
+                        noise_floor,
+                        threshold,
+                    )
 
                 if level < retrigger_level:
                     spike_armed = True
