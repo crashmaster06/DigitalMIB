@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Desktop clap listener: reads the default microphone and, on a double clap,
-plays a Spotify track, opens n8n + Gmail in Chrome, and speaks a welcome
-line via ElevenLabs.
+plays music (a local WAV in the background, or a Spotify link), opens any
+number of pages in Chrome, and speaks a welcome line via ElevenLabs.
 
 Run:
   .venv\\Scripts\\python -m pip install -r requirements.txt
@@ -30,9 +30,14 @@ Tuning (constants below):
   RETRIGGER_RATIO   — audio must fall below threshold * this before another
                         spike candidate can be armed.
   NOISE_FLOOR_ALPHA — closer to 1 = slower baseline adaptation to room noise.
-  SONG_URI          — Spotify link opened on each double clap.
-  N8N_URL_DEFAULT / GMAIL_URL_DEFAULT — pages opened in Chrome (overridable
-                        via N8N_URL / GMAIL_URL in .env).
+  SONG_FILE_DEFAULT — path to a local WAV file played directly in the
+                        background (no app window). Overridable via SONG_FILE
+                        in .env. Falls back to SONG_URI (opens Spotify/Chrome)
+                        when unset or the file is missing.
+  SONG_URI          — Spotify link opened on each double clap (fallback).
+  DASHBOARD_URLS_DEFAULT — comma-separated pages opened as Chrome tabs, as
+                        many as you want. Overridable via DASHBOARD_URLS in
+                        .env (e.g. DASHBOARD_URLS=https://a.com,https://b.com).
   JARVIS_WELCOME_*  — TTS after the song (ElevenLabs). Configure via
                         environment or a `.env` file next to this script
                         (ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, etc.).
@@ -83,12 +88,15 @@ CLAP_DECAY_RATIO = 0.35
 INPUT_PROBE_S = 0.5
 INPUT_SILENT_RMS = 0.001
 
-# Spotify link opened on each double clap.
+# Music played on each double clap.
+# If SONG_FILE (.env) points to a local WAV file, it's played directly in the
+# background (no app window). Otherwise SONG_URI is opened (opens Spotify/Chrome).
 SONG_URI = "https://open.spotify.com/intl-fr/track/1hQMzVXdoDZXcO16GOhWc5?si=44715db9253b48c6"
+SONG_FILE_DEFAULT = ""  # e.g. "wake.wav" (relative to this script, or an absolute path)
 
-# Pages opened in Chrome on each double clap (overridable via .env: N8N_URL, GMAIL_URL).
-N8N_URL_DEFAULT = "https://n8n.digital-mib.com/"
-GMAIL_URL_DEFAULT = "https://mail.google.com/mail/u/0/#inbox"
+# Pages opened in Chrome on each double clap: comma-separated list, as many as you want.
+# Overridable via .env: DASHBOARD_URLS=https://a.com,https://b.com,https://c.com
+DASHBOARD_URLS_DEFAULT = "https://n8n.digital-mib.com/,https://mail.google.com/mail/u/0/#inbox"
 
 JARVIS_WELCOME_ENABLED = True
 JARVIS_WELCOME_PHRASE = "Bonjour Patron, voici votre tableau de bord n8n et vos emails."
@@ -375,7 +383,49 @@ def say_jarvis_welcome() -> None:
         log.warning("Could not play ElevenLabs audio: %s", e)
 
 
+def _play_local_wav_background(path: Path) -> bool:
+    """Decode and play a local WAV file directly (no app window)."""
+    try:
+        with wave.open(str(path), "rb") as wf:
+            ch = wf.getnchannels()
+            sw = wf.getsampwidth()
+            rate = wf.getframerate()
+            raw = wf.readframes(wf.getnframes())
+    except (OSError, wave.Error) as e:
+        log.warning("Could not read SONG_FILE (%s): %s", path, e)
+        return False
+    if not raw:
+        return False
+    if sw == 2:
+        pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sw == 1:
+        pcm = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    else:
+        log.warning("Unsupported WAV sample width (%d bytes) for SONG_FILE.", sw)
+        return False
+    if ch > 1:
+        pcm = pcm.reshape(-1, ch)
+    try:
+        sd.play(pcm, rate)
+    except Exception as e:
+        log.warning("Could not play SONG_FILE: %s", e)
+        return False
+    return True
+
+
 def play_song(uri: str) -> None:
+    song_file = (os.environ.get("SONG_FILE") or SONG_FILE_DEFAULT).strip()
+    if song_file:
+        path = Path(song_file)
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        if path.is_file():
+            if _play_local_wav_background(path):
+                return
+            log.warning("SONG_FILE playback failed; falling back to SONG_URI.")
+        else:
+            log.warning("SONG_FILE not found (%s); falling back to SONG_URI.", path)
+
     u = uri.strip()
     if not u:
         return
@@ -404,10 +454,9 @@ def _chrome_executable() -> str | None:
 
 
 def open_dashboard_apps() -> None:
-    """Open n8n + Gmail as tabs in a new Chrome window."""
-    n8n_url = (os.environ.get("N8N_URL") or N8N_URL_DEFAULT).strip()
-    gmail_url = (os.environ.get("GMAIL_URL") or GMAIL_URL_DEFAULT).strip()
-    urls = [u for u in (n8n_url, gmail_url) if u]
+    """Open every DASHBOARD_URLS entry as a tab in a new Chrome window."""
+    raw = (os.environ.get("DASHBOARD_URLS") or DASHBOARD_URLS_DEFAULT).strip()
+    urls = [u.strip() for u in raw.replace("\n", ",").split(",") if u.strip()]
     if not urls:
         return
     chrome = _chrome_executable()
@@ -460,7 +509,10 @@ def main() -> int:
         MIN_RMS,
         COOLDOWN_S,
     )
-    log.info("Double clap: plays %s, opens n8n + Gmail in Chrome.", SONG_URI or "(no song)")
+    dashboard_urls = (os.environ.get("DASHBOARD_URLS") or DASHBOARD_URLS_DEFAULT).strip()
+    song_file = (os.environ.get("SONG_FILE") or SONG_FILE_DEFAULT).strip()
+    music_desc = f"local file {song_file}" if song_file else (SONG_URI or "(no song)")
+    log.info("Double clap: plays %s, opens in Chrome: %s", music_desc, dashboard_urls)
     if JARVIS_WELCOME_ENABLED:
         ev, em, ef, er = elevenlabs_env_config()
         log.info(

@@ -2,8 +2,9 @@
 
 Script Python qui ecoute le micro par defaut et, sur un **double clap**, :
 
-1. joue un morceau Spotify,
-2. ouvre **n8n** et **Gmail** dans une nouvelle fenetre Chrome,
+1. joue de la musique (un fichier local en fond, ou un lien Spotify),
+2. ouvre une liste de sites (n8n, Gmail, autant que tu veux) dans une nouvelle
+   fenetre Chrome,
 3. dit une phrase de bienvenue via **ElevenLabs**.
 
 Adapte pour Windows. Toutes les valeurs (musique, sites, phrase) sont
@@ -42,6 +43,31 @@ voix clonee/creee par toi).
 ```
 
 Autorise l'acces au micro si Windows le demande. Arrete avec **Ctrl+C**.
+
+## Musique sans ouvrir Spotify
+
+Par defaut, le double clap ouvre le lien Spotify (`SONG_URI` dans `jarvis.py`),
+ce qui lance l'appli Spotify ou un onglet de navigateur. Pour une musique
+jouee en fond, sans ouvrir aucune fenetre :
+
+1. Procure-toi une version **WAV** du son voulu (converti depuis un fichier
+   que tu possedes, ou un son libre de droits).
+2. Place-le dans le dossier `jarvis-clap` (ou ailleurs, avec un chemin complet).
+3. Dans `.env`, ajoute : `SONG_FILE=wake.wav` (ou le chemin complet du fichier).
+
+Si `SONG_FILE` est absent ou introuvable, le script revient automatiquement
+au lien Spotify (`SONG_URI`).
+
+## Ajouter des sites a ouvrir
+
+Dans `.env`, ajoute une ligne `DASHBOARD_URLS` avec autant de sites que tu
+veux, separes par des virgules :
+
+```env
+DASHBOARD_URLS=https://n8n.digital-mib.com/,https://mail.google.com/mail/u/0/#inbox,https://monsite.com
+```
+
+Tous s'ouvrent en onglets dans une meme nouvelle fenetre Chrome.
 
 ## Mode debug
 
